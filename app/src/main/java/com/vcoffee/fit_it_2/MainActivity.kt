@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -51,6 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -62,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -89,6 +92,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.Calendar
@@ -102,7 +106,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             FitIt2Theme {
                 val navController = rememberNavController()
-                // Używamy tego samego ViewModel dla całej aplikacji
                 val viewModel: FoodViewModel = viewModel(
                     factory = FoodViewModelFactory(dataStore)
                 )
@@ -172,12 +175,14 @@ data class Day(
     val isToday: Boolean = false
 ) {
     fun toDateString(): String = "$number.${month + 1}.$year"
+    fun toKey(): String = "$year-${month + 1}-$number"
 }
 
 @Serializable
 data class DailyEntry(
     val date: String,
-    val foodIds: List<Int>
+    val foodIds: List<Int>,
+    val waterMl: Int = 0 // Dodane pole dla ilości wody
 )
 
 @Serializable
@@ -264,9 +269,9 @@ class FoodViewModel(
         }
     }
 
-    fun updateDailyEntry(date: String, foodIds: List<Int>) {
+    fun updateDailyEntry(date: String, foodIds: List<Int>, waterMl: Int) {
         viewModelScope.launch {
-            val newEntry = DailyEntry(date, foodIds)
+            val newEntry = DailyEntry(date, foodIds, waterMl)
             _dailyEntries.value = _dailyEntries.value.toMutableMap().apply {
                 this[date] = newEntry
             }
@@ -392,7 +397,8 @@ fun CalendarScreen(viewModel: FoodViewModel) {
                     ) {
                         week.forEach { day ->
                             val dateKey = "${day.year}-${day.month + 1}-${day.number}"
-                            val hasEntries = dailyEntries[dateKey]?.foodIds?.isNotEmpty() == true
+                            val dailyEntry = dailyEntries[dateKey]
+                            val hasEntries = dailyEntry?.foodIds?.isNotEmpty() == true || dailyEntry?.waterMl ?: 0 > 0
 
                             val backgroundColor = if (day.isToday) {
                                 MaterialTheme.colorScheme.primary
@@ -472,6 +478,7 @@ fun CalendarScreen(viewModel: FoodViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DayMealDialog(
     day: Day,
@@ -486,15 +493,31 @@ fun DayMealDialog(
     // Create a mutable list of selected food IDs
     val selectedFoodIds = remember { mutableStateListOf<Int>() }
 
+    // Water tracking
+    var waterAmount by remember { mutableStateOf("") }
+
+    // Search functionality
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredFoodItems = remember(foodItems, searchQuery) {
+        if (searchQuery.isBlank()) {
+            foodItems
+        } else {
+            foodItems.filter {
+                it.name.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
     // Calculate total calories
     val totalCalories = selectedFoodIds.sumOf { id ->
         foodItems.find { it.id == id }?.calories ?: 0
     }
 
-    // Initialize selectedFoodIds when dialog opens or dailyEntry changes
+    // Initialize selectedFoodIds and waterAmount when dialog opens
     LaunchedEffect(dailyEntry) {
         selectedFoodIds.clear()
         dailyEntry?.foodIds?.let { selectedFoodIds.addAll(it) }
+        waterAmount = dailyEntry?.waterMl?.toString() ?: ""
     }
 
     AlertDialog(
@@ -502,16 +525,44 @@ fun DayMealDialog(
         title = { Text("Posiłki na dzień: ${day.toDateString()}") },
         text = {
             Column {
-                Text("Wybierz posiłki:",
-                    modifier = Modifier.padding(bottom = 8.dp))
+                // Water intake field
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Woda:", fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = waterAmount,
+                        onValueChange = { waterAmount = it.filter { char -> char.isDigit() } },
+                        label = { Text("ml") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.width(120.dp)
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text("Dzisiaj: ${waterAmount.ifBlank { "0" }} ml")
+                }
 
-                if (foodItems.isEmpty()) {
-                    Text("Brak posiłków w bazie danych",
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Search bar for meals
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    label = { Text("Szukaj posiłków") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Szukaj") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (filteredFoodItems.isEmpty()) {
+                    Text("Brak posiłków spełniających kryteria",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 16.dp))
                 } else {
                     LazyColumn(modifier = Modifier.height(300.dp)) {
-                        items(foodItems) { foodItem ->
+                        items(filteredFoodItems) { foodItem ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
@@ -551,7 +602,8 @@ fun DayMealDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    viewModel.updateDailyEntry(dateKey, selectedFoodIds.toList())
+                    val water = waterAmount.toIntOrNull() ?: 0
+                    viewModel.updateDailyEntry(dateKey, selectedFoodIds.toList(), water)
                     onDismiss()
                 }
             ) {
@@ -620,12 +672,25 @@ private fun generateCalendarDays(month: Int, year: Int): List<Day> {
     return days
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StorageScreen(viewModel: FoodViewModel) {
     val foodItems by viewModel.foodItems.collectAsState(emptyList())
     var showAddDialog by remember { mutableStateOf(false) }
     var foodName by remember { mutableStateOf("") }
     var calories by remember { mutableStateOf("") }
+
+    // Search functionality
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredFoodItems = remember(foodItems, searchQuery) {
+        if (searchQuery.isBlank()) {
+            foodItems
+        } else {
+            foodItems.filter {
+                it.name.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
 
     LaunchedEffect(showAddDialog) {
         if (showAddDialog) {
@@ -686,24 +751,46 @@ fun StorageScreen(viewModel: FoodViewModel) {
             }
         }
     ) { innerPadding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            if (foodItems.isEmpty()) {
-                Text(
-                    text = "Brak produktów",
-                    style = MaterialTheme.typography.headlineLarge,
-                    modifier = Modifier.align(Alignment.Center)
-                )
+            // Search bar
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Szukaj posiłków") },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Szukaj") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            )
+
+            if (filteredFoodItems.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (foodItems.isEmpty()) {
+                        Text(
+                            text = "Brak produktów",
+                            style = MaterialTheme.typography.headlineLarge
+                        )
+                    } else {
+                        Text(
+                            text = "Brak wyników wyszukiwania",
+                            style = MaterialTheme.typography.headlineMedium
+                        )
+                    }
+                }
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(foodItems) { item ->
+                    items(filteredFoodItems) { item ->
                         Surface(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
                             color = MaterialTheme.colorScheme.primaryContainer
