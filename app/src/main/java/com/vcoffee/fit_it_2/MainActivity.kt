@@ -62,7 +62,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -90,7 +89,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.Calendar
@@ -104,36 +102,37 @@ class MainActivity : ComponentActivity() {
         setContent {
             FitIt2Theme {
                 val navController = rememberNavController()
-                AppScaffold(navController)
+                // Używamy tego samego ViewModel dla całej aplikacji
+                val viewModel: FoodViewModel = viewModel(
+                    factory = FoodViewModelFactory(dataStore)
+                )
+                AppScaffold(navController, viewModel)
             }
         }
     }
 }
 
 @Composable
-fun AppScaffold(navController: NavHostController) {
+fun AppScaffold(navController: NavHostController, viewModel: FoodViewModel) {
     Scaffold(
         bottomBar = { BottomNavigationBar(navController) }
     ) { innerPadding ->
         Box(Modifier.padding(innerPadding)) {
-            NavigationHost(navController)
+            NavigationHost(navController, viewModel)
         }
     }
 }
 
 @Composable
-fun NavigationHost(navController: NavHostController) {
+fun NavigationHost(navController: NavHostController, viewModel: FoodViewModel) {
     NavHost(
         navController = navController,
         startDestination = Screen.Calendar.route
     ) {
         composable(Screen.Calendar.route) {
-            CalendarScreen()
+            CalendarScreen(viewModel)
         }
         composable(Screen.Storage.route) {
-            val viewModel: FoodViewModel = viewModel(
-                factory = FoodViewModelFactory(LocalContext.current.dataStore)
-            )
             StorageScreen(viewModel)
         }
     }
@@ -173,7 +172,6 @@ data class Day(
     val isToday: Boolean = false
 ) {
     fun toDateString(): String = "$number.${month + 1}.$year"
-    fun toKey(): String = "$year-${month + 1}-$number"
 }
 
 @Serializable
@@ -291,13 +289,11 @@ class FoodViewModelFactory(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CalendarScreen() {
-    val viewModel: FoodViewModel = viewModel(
-        factory = FoodViewModelFactory(LocalContext.current.dataStore)
-    )
+fun CalendarScreen(viewModel: FoodViewModel) {
     val dailyEntries by viewModel.dailyEntries.collectAsState()
+    val foodItems by viewModel.foodItems.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
+    rememberCoroutineScope()
     val calendar = remember { Calendar.getInstance() }
 
     var currentMonth by remember { mutableIntStateOf(calendar.get(Calendar.MONTH)) }
@@ -470,6 +466,7 @@ fun CalendarScreen() {
         DayMealDialog(
             day = selectedDay!!,
             viewModel = viewModel,
+            foodItems = foodItems,
             onDismiss = { showDayDialog = false }
         )
     }
@@ -479,15 +476,20 @@ fun CalendarScreen() {
 fun DayMealDialog(
     day: Day,
     viewModel: FoodViewModel,
+    foodItems: List<FoodItem>,
     onDismiss: () -> Unit
 ) {
-    val foodItems by viewModel.foodItems.collectAsState()
     val dailyEntries by viewModel.dailyEntries.collectAsState()
     val dateKey = "${day.year}-${day.month + 1}-${day.number}"
     val dailyEntry = dailyEntries[dateKey]
 
     // Create a mutable list of selected food IDs
     val selectedFoodIds = remember { mutableStateListOf<Int>() }
+
+    // Calculate total calories
+    val totalCalories = selectedFoodIds.sumOf { id ->
+        foodItems.find { it.id == id }?.calories ?: 0
+    }
 
     // Initialize selectedFoodIds when dialog opens or dailyEntry changes
     LaunchedEffect(dailyEntry) {
@@ -533,6 +535,16 @@ fun DayMealDialog(
                             }
                         }
                     }
+                }
+
+                // Display total calories
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Suma kalorii:", fontWeight = FontWeight.Bold)
+                    Text("$totalCalories kcal", fontWeight = FontWeight.Bold)
                 }
             }
         },
