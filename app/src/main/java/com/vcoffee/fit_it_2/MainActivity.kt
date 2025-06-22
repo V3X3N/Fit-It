@@ -79,7 +79,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-// DataStore setup
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "fit_it_data")
 
 class MainActivity : ComponentActivity() {
@@ -89,7 +88,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             FitIt2Theme {
                 val navController = rememberNavController()
-                AppScaffold(navController = navController)
+                AppScaffold(navController)
             }
         }
     }
@@ -100,7 +99,7 @@ fun AppScaffold(navController: NavHostController) {
     Scaffold(
         bottomBar = { BottomNavigationBar(navController) }
     ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding)) {
+        Box(Modifier.padding(innerPadding)) {
             NavigationHost(navController)
         }
     }
@@ -112,7 +111,9 @@ fun NavigationHost(navController: NavHostController) {
         navController = navController,
         startDestination = Screen.Calendar.route
     ) {
-        composable(Screen.Calendar.route) { CalendarScreen() }
+        composable(Screen.Calendar.route) {
+            CalendarScreen()
+        }
         composable(Screen.Storage.route) {
             val viewModel: FoodViewModel = viewModel(
                 factory = FoodViewModelFactory(LocalContext.current.dataStore)
@@ -136,7 +137,9 @@ fun BottomNavigationBar(navController: NavController) {
                 selected = currentRoute == screen.route,
                 onClick = {
                     navController.navigate(screen.route) {
-                        popUpTo(navController.graph.startDestinationId) { saveState = true }
+                        popUpTo(navController.graph.startDestinationId) {
+                            saveState = true
+                        }
                         launchSingleTop = true
                         restoreState = true
                     }
@@ -179,7 +182,6 @@ fun CalendarScreen() {
     }
 }
 
-// Model danych dla produktu
 @Serializable
 data class FoodItem(
     val id: Int,
@@ -187,7 +189,9 @@ data class FoodItem(
     val calories: Int
 )
 
-class FoodViewModel(private val dataStore: DataStore<Preferences>) : ViewModel() {
+class FoodViewModel(
+    private val dataStore: DataStore<Preferences>
+) : ViewModel() {
     private val _foodItems = MutableStateFlow<List<FoodItem>>(emptyList())
     val foodItems: StateFlow<List<FoodItem>> = _foodItems.asStateFlow()
 
@@ -201,25 +205,28 @@ class FoodViewModel(private val dataStore: DataStore<Preferences>) : ViewModel()
 
     private suspend fun loadInitialData() {
         try {
-            val preferences = dataStore.data.first()
-            val json = preferences[FOOD_ITEMS_KEY] ?: "[]"
+            val prefs = dataStore.data.first()
+            val json = prefs[FOOD_ITEMS_KEY] ?: "[]"
+            Log.d("FoodVM", "Loaded JSON: $json")
             _foodItems.value = Json.decodeFromString(json)
-            Log.d("FoodVM", "Loaded ${_foodItems.value.size} items from DataStore")
+            Log.d("FoodVM", "Items loaded: ${_foodItems.value.size}")
         } catch (e: Exception) {
-            Log.e("FoodVM", "Error loading initial data", e)
+            Log.e("FoodVM", "Error loading data", e)
             _foodItems.value = emptyList()
         }
     }
 
     private suspend fun saveFoodItems() {
+        val list = _foodItems.value
+        val json = Json.encodeToString(list)
+        Log.d("FoodVM", "Saving JSON: $json")
         try {
-            val json = Json.encodeToString(_foodItems.value)
-            dataStore.edit { preferences ->
-                preferences[FOOD_ITEMS_KEY] = json
+            dataStore.edit { prefs ->
+                prefs[FOOD_ITEMS_KEY] = json
             }
-            Log.d("FoodVM", "Saved ${_foodItems.value.size} items to DataStore")
+            Log.d("FoodVM", "Saved items: ${list.size}")
         } catch (e: Exception) {
-            Log.e("FoodVM", "Error saving items", e)
+            Log.e("FoodVM", "Error saving data", e)
         }
     }
 
@@ -227,7 +234,7 @@ class FoodViewModel(private val dataStore: DataStore<Preferences>) : ViewModel()
         viewModelScope.launch {
             val newId = (_foodItems.value.maxOfOrNull { it.id } ?: 0) + 1
             val newItem = FoodItem(newId, name, calories)
-            _foodItems.value = _foodItems.value + newItem
+            _foodItems.value += newItem
             saveFoodItems()
         }
     }
@@ -240,8 +247,9 @@ class FoodViewModel(private val dataStore: DataStore<Preferences>) : ViewModel()
     }
 }
 
-// Factory dla ViewModel
-class FoodViewModelFactory(private val dataStore: DataStore<Preferences>) : ViewModelProvider.Factory {
+class FoodViewModelFactory(
+    private val dataStore: DataStore<Preferences>
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(FoodViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
@@ -258,7 +266,6 @@ fun StorageScreen(viewModel: FoodViewModel) {
     var foodName by remember { mutableStateOf("") }
     var calories by remember { mutableStateOf("") }
 
-    // Resetuj dialog przy ponownym otwarciu
     LaunchedEffect(showAddDialog) {
         if (showAddDialog) {
             foodName = ""
@@ -266,7 +273,6 @@ fun StorageScreen(viewModel: FoodViewModel) {
         }
     }
 
-    // Walidacja wejścia
     val isInputValid = remember(foodName, calories) {
         foodName.isNotBlank() && calories.toIntOrNull()?.let { it > 0 } == true
     }
@@ -286,9 +292,7 @@ fun StorageScreen(viewModel: FoodViewModel) {
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = calories,
-                        onValueChange = { newValue ->
-                            calories = newValue.filter { it.isDigit() }
-                        },
+                        onValueChange = { input -> calories = input.filter { it.isDigit() } },
                         label = { Text("Kalorie na 100g") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.fillMaxWidth()
@@ -298,27 +302,18 @@ fun StorageScreen(viewModel: FoodViewModel) {
             confirmButton = {
                 Button(
                     onClick = {
-                        val calValue = calories.ifEmpty { "0" }.toIntOrNull() ?: 0
-                        Log.d("StorageScreen", "Dodaję produkt: name='$foodName', kcal=$calValue")
+                        val calVal = calories.toIntOrNull() ?: 0
+                        Log.d("StorageScreen", "Adding: name='$foodName', kcal=$calVal")
                         if (isInputValid) {
-                            try {
-                                viewModel.addFoodItem(foodName, calValue)
-                                Log.d("StorageScreen", "Wywołano addFoodItem()")
-                            } catch (e: Exception) {
-                                Log.e("StorageScreen", "addFoodItem() rzuciło", e)
-                            }
+                            viewModel.addFoodItem(foodName, calVal)
                             showAddDialog = false
                         }
                     },
                     enabled = isInputValid
-                ) {
-                    Text("Dodaj")
-                }
+                ) { Text("Dodaj") }
             },
             dismissButton = {
-                Button(onClick = { showAddDialog = false }) {
-                    Text("Anuluj")
-                }
+                Button(onClick = { showAddDialog = false }) { Text("Anuluj") }
             }
         )
     }
@@ -331,7 +326,9 @@ fun StorageScreen(viewModel: FoodViewModel) {
         }
     ) { innerPadding ->
         Box(
-            modifier = Modifier.fillMaxSize().padding(innerPadding)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
         ) {
             if (foodItems.isEmpty()) {
                 Text(
@@ -340,64 +337,47 @@ fun StorageScreen(viewModel: FoodViewModel) {
                     modifier = Modifier.align(Alignment.Center)
                 )
             } else {
-                FoodItemsList(foodItems = foodItems, onRemove = { item ->
-                    viewModel.removeFoodItem(item)
-                })
-            }
-        }
-    }
-}
-
-@Composable
-fun FoodItemsList(foodItems: List<FoodItem>, onRemove: (FoodItem) -> Unit) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        items(foodItems) { item ->
-            FoodItemCard(foodItem = item, onRemove = onRemove)
-        }
-    }
-}
-
-@Composable
-fun FoodItemCard(foodItem: FoodItem, onRemove: (FoodItem) -> Unit) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp)),
-        color = MaterialTheme.colorScheme.primaryContainer
-    ) {
-        Row(
-            modifier = Modifier
-                .padding(16.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = foodItem.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "${foodItem.calories} kcal/100g",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                )
-            }
-
-            Button(
-                onClick = { onRemove(foodItem) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text("Usuń")
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(foodItems) { item ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "${item.calories} kcal/100g",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                    )
+                                }
+                                Button(
+                                    onClick = { viewModel.removeFoodItem(item) },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Usuń")
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -409,5 +389,5 @@ sealed class Screen(
     val icon: ImageVector
 ) {
     data object Calendar : Screen("calendar", "Calendar", Icons.Filled.DateRange)
-    data object Storage : Screen("storage", "Storage", Icons.Filled.Build)
+    data object Storage  : Screen("storage",  "Storage",  Icons.Filled.Build)
 }
