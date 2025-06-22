@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -52,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -88,6 +90,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.Calendar
@@ -168,17 +171,140 @@ data class Day(
     val year: Int,
     val isCurrentMonth: Boolean,
     val isToday: Boolean = false
+) {
+    fun toDateString(): String = "$number.${month + 1}.$year"
+    fun toKey(): String = "$year-${month + 1}-$number"
+}
+
+@Serializable
+data class DailyEntry(
+    val date: String,
+    val foodIds: List<Int>
 )
+
+@Serializable
+data class FoodItem(
+    val id: Int,
+    val name: String,
+    val calories: Int
+)
+
+class FoodViewModel(
+    private val dataStore: DataStore<Preferences>
+) : ViewModel() {
+    private val _foodItems = MutableStateFlow<List<FoodItem>>(emptyList())
+    val foodItems: StateFlow<List<FoodItem>> = _foodItems.asStateFlow()
+
+    private val _dailyEntries = MutableStateFlow<Map<String, DailyEntry>>(emptyMap())
+    val dailyEntries: StateFlow<Map<String, DailyEntry>> = _dailyEntries.asStateFlow()
+
+    private val FOOD_ITEMS_KEY = stringPreferencesKey("food_items")
+    private val DAILY_ENTRIES_KEY = stringPreferencesKey("daily_entries")
+
+    init {
+        viewModelScope.launch {
+            loadInitialData()
+        }
+    }
+
+    private suspend fun loadInitialData() {
+        try {
+            val prefs = dataStore.data.first()
+
+            // Load food items
+            val foodJson = prefs[FOOD_ITEMS_KEY] ?: "[]"
+            _foodItems.value = try {
+                Json.decodeFromString(foodJson)
+            } catch (e: Exception) {
+                Log.e("FoodVM", "Error parsing food items", e)
+                emptyList()
+            }
+
+            // Load daily entries
+            val entriesJson = prefs[DAILY_ENTRIES_KEY] ?: "[]"
+            _dailyEntries.value = try {
+                Json.decodeFromString<List<DailyEntry>>(entriesJson)
+                    .associateBy { it.date }
+            } catch (e: Exception) {
+                Log.e("FoodVM", "Error parsing daily entries", e)
+                emptyMap()
+            }
+        } catch (e: Exception) {
+            Log.e("FoodVM", "Error loading data", e)
+        }
+    }
+
+    private suspend fun saveFoodItems() {
+        val list = _foodItems.value
+        val json = Json.encodeToString(list)
+        dataStore.edit { prefs ->
+            prefs[FOOD_ITEMS_KEY] = json
+        }
+    }
+
+    private suspend fun saveDailyEntries() {
+        val entriesList = _dailyEntries.value.values.toList()
+        val json = Json.encodeToString(entriesList)
+        dataStore.edit { prefs ->
+            prefs[DAILY_ENTRIES_KEY] = json
+        }
+    }
+
+    fun addFoodItem(name: String, calories: Int) {
+        viewModelScope.launch {
+            val newId = (_foodItems.value.maxOfOrNull { it.id } ?: 0) + 1
+            val newItem = FoodItem(newId, name, calories)
+            _foodItems.value += newItem
+            saveFoodItems()
+        }
+    }
+
+    fun removeFoodItem(item: FoodItem) {
+        viewModelScope.launch {
+            _foodItems.value = _foodItems.value.filter { it.id != item.id }
+            saveFoodItems()
+        }
+    }
+
+    fun updateDailyEntry(date: String, foodIds: List<Int>) {
+        viewModelScope.launch {
+            val newEntry = DailyEntry(date, foodIds)
+            _dailyEntries.value = _dailyEntries.value.toMutableMap().apply {
+                this[date] = newEntry
+            }
+            saveDailyEntries()
+        }
+    }
+}
+
+class FoodViewModelFactory(
+    private val dataStore: DataStore<Preferences>
+) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(FoodViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return FoodViewModel(dataStore) as T
+        }
+        throw IllegalArgumentException("Unknown ViewModel class")
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalendarScreen() {
+    val viewModel: FoodViewModel = viewModel(
+        factory = FoodViewModelFactory(LocalContext.current.dataStore)
+    )
+    val dailyEntries by viewModel.dailyEntries.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val calendar = remember { Calendar.getInstance() }
 
     var currentMonth by remember { mutableIntStateOf(calendar.get(Calendar.MONTH)) }
     var currentYear by remember { mutableIntStateOf(calendar.get(Calendar.YEAR)) }
+
+    var showDayDialog by remember { mutableStateOf(false) }
+    var selectedDay by remember { mutableStateOf<Day?>(null) }
 
     val days = remember(currentMonth, currentYear) {
         generateCalendarDays(currentMonth, currentYear)
@@ -269,6 +395,9 @@ fun CalendarScreen() {
                         horizontalArrangement = Arrangement.SpaceAround
                     ) {
                         week.forEach { day ->
+                            val dateKey = "${day.year}-${day.month + 1}-${day.number}"
+                            val hasEntries = dailyEntries[dateKey]?.foodIds?.isNotEmpty() == true
+
                             val backgroundColor = if (day.isToday) {
                                 MaterialTheme.colorScheme.primary
                             } else if (day.isCurrentMonth) {
@@ -291,11 +420,8 @@ fun CalendarScreen() {
                                     .clip(CircleShape)
                                     .background(backgroundColor)
                                     .clickable {
-                                        scope.launch {
-                                            snackbarHostState.showSnackbar(
-                                                "Wybrano dzień: ${day.number}.${day.month + 1}.${day.year}"
-                                            )
-                                        }
+                                        selectedDay = day
+                                        showDayDialog = true
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -304,6 +430,33 @@ fun CalendarScreen() {
                                     color = textColor,
                                     fontWeight = if (day.isToday) FontWeight.Bold else FontWeight.Normal
                                 )
+
+                                // Show indicator if day has entries
+                                if (hasEntries) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.secondary)
+                                    )
+                                }
+
+                                // Plus icon for adding entries
+                                if (day.isCurrentMonth) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .size(16.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Add,
+                                            contentDescription = "Dodaj posiłek",
+                                            modifier = Modifier.size(12.dp),
+                                            tint = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -311,6 +464,94 @@ fun CalendarScreen() {
             }
         }
     }
+
+    // Dialog for adding meals to a day
+    if (showDayDialog && selectedDay != null) {
+        DayMealDialog(
+            day = selectedDay!!,
+            viewModel = viewModel,
+            onDismiss = { showDayDialog = false }
+        )
+    }
+}
+
+@Composable
+fun DayMealDialog(
+    day: Day,
+    viewModel: FoodViewModel,
+    onDismiss: () -> Unit
+) {
+    val foodItems by viewModel.foodItems.collectAsState()
+    val dailyEntries by viewModel.dailyEntries.collectAsState()
+    val dateKey = "${day.year}-${day.month + 1}-${day.number}"
+    val dailyEntry = dailyEntries[dateKey]
+
+    // Create a mutable list of selected food IDs
+    val selectedFoodIds = remember { mutableStateListOf<Int>() }
+
+    // Initialize selectedFoodIds when dialog opens or dailyEntry changes
+    LaunchedEffect(dailyEntry) {
+        selectedFoodIds.clear()
+        dailyEntry?.foodIds?.let { selectedFoodIds.addAll(it) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Posiłki na dzień: ${day.toDateString()}") },
+        text = {
+            Column {
+                Text("Wybierz posiłki:",
+                    modifier = Modifier.padding(bottom = 8.dp))
+
+                if (foodItems.isEmpty()) {
+                    Text("Brak posiłków w bazie danych",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 16.dp))
+                } else {
+                    LazyColumn(modifier = Modifier.height(300.dp)) {
+                        items(foodItems) { foodItem ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                Checkbox(
+                                    checked = selectedFoodIds.contains(foodItem.id),
+                                    onCheckedChange = { isChecked ->
+                                        if (isChecked) {
+                                            selectedFoodIds.add(foodItem.id)
+                                        } else {
+                                            selectedFoodIds.remove(foodItem.id)
+                                        }
+                                    }
+                                )
+                                Text(foodItem.name, modifier = Modifier.padding(start = 8.dp))
+                                Spacer(modifier = Modifier.weight(1f))
+                                Text("${foodItem.calories} kcal",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    viewModel.updateDailyEntry(dateKey, selectedFoodIds.toList())
+                    onDismiss()
+                }
+            ) {
+                Text("Zapisz")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Anuluj")
+            }
+        }
+    )
 }
 
 private fun generateCalendarDays(month: Int, year: Int): List<Day> {
@@ -365,83 +606,6 @@ private fun generateCalendarDays(month: Int, year: Int): List<Day> {
     }
 
     return days
-}
-
-@Serializable
-data class FoodItem(
-    val id: Int,
-    val name: String,
-    val calories: Int
-)
-
-class FoodViewModel(
-    private val dataStore: DataStore<Preferences>
-) : ViewModel() {
-    private val _foodItems = MutableStateFlow<List<FoodItem>>(emptyList())
-    val foodItems: StateFlow<List<FoodItem>> = _foodItems.asStateFlow()
-
-    private val FOOD_ITEMS_KEY = stringPreferencesKey("food_items")
-
-    init {
-        viewModelScope.launch {
-            loadInitialData()
-        }
-    }
-
-    private suspend fun loadInitialData() {
-        try {
-            val prefs = dataStore.data.first()
-            val json = prefs[FOOD_ITEMS_KEY] ?: "[]"
-            Log.d("FoodVM", "Loaded JSON: $json")
-            _foodItems.value = Json.decodeFromString(json)
-            Log.d("FoodVM", "Items loaded: ${_foodItems.value.size}")
-        } catch (e: Exception) {
-            Log.e("FoodVM", "Error loading data", e)
-            _foodItems.value = emptyList()
-        }
-    }
-
-    private suspend fun saveFoodItems() {
-        val list = _foodItems.value
-        val json = Json.encodeToString(list)
-        Log.d("FoodVM", "Saving JSON: $json")
-        try {
-            dataStore.edit { prefs ->
-                prefs[FOOD_ITEMS_KEY] = json
-            }
-            Log.d("FoodVM", "Saved items: ${list.size}")
-        } catch (e: Exception) {
-            Log.e("FoodVM", "Error saving data", e)
-        }
-    }
-
-    fun addFoodItem(name: String, calories: Int) {
-        viewModelScope.launch {
-            val newId = (_foodItems.value.maxOfOrNull { it.id } ?: 0) + 1
-            val newItem = FoodItem(newId, name, calories)
-            _foodItems.value += newItem
-            saveFoodItems()
-        }
-    }
-
-    fun removeFoodItem(item: FoodItem) {
-        viewModelScope.launch {
-            _foodItems.value = _foodItems.value.filter { it.id != item.id }
-            saveFoodItems()
-        }
-    }
-}
-
-class FoodViewModelFactory(
-    private val dataStore: DataStore<Preferences>
-) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        if (modelClass.isAssignableFrom(FoodViewModel::class.java)) {
-            @Suppress("UNCHECKED_CAST")
-            return FoodViewModel(dataStore) as T
-        }
-        throw IllegalArgumentException("Unknown ViewModel class")
-    }
 }
 
 @Composable
