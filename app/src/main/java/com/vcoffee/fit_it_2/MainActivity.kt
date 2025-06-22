@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
@@ -36,7 +37,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,7 +52,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -64,7 +63,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -92,7 +90,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.Calendar
@@ -138,12 +135,15 @@ fun NavigationHost(navController: NavHostController, viewModel: FoodViewModel) {
         composable(Screen.Storage.route) {
             StorageScreen(viewModel)
         }
+        composable(Screen.BMI.route) {
+            BMIScreen()
+        }
     }
 }
 
 @Composable
 fun BottomNavigationBar(navController: NavController) {
-    val items = listOf(Screen.Calendar, Screen.Storage)
+    val items = listOf(Screen.Calendar, Screen.Storage, Screen.BMI)
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
@@ -167,6 +167,175 @@ fun BottomNavigationBar(navController: NavController) {
     }
 }
 
+@Composable
+fun BMIScreen() {
+    var weight by remember { mutableStateOf("") }
+    var height by remember { mutableStateOf("") }
+    var bmiResult by remember { mutableStateOf<Float?>(null) }
+    var bmiCategory by remember { mutableStateOf("") }
+    var showInfoDialog by remember { mutableStateOf(false) }
+
+    val calculateBMI = {
+        val weightValue = weight.toFloatOrNull()
+        val heightValue = height.toFloatOrNull()
+
+        if (weightValue != null && heightValue != null && weightValue > 0 && heightValue > 0) {
+            val heightInMeters = heightValue / 100
+            val bmi = weightValue / (heightInMeters * heightInMeters)
+            bmiResult = bmi
+
+            bmiCategory = when {
+                bmi < 16.0 -> "Wygłodzenie"
+                bmi < 17.0 -> "Wychudzenie"
+                bmi < 18.5 -> "Niedowaga"
+                bmi < 25.0 -> "Prawidłowa masa"
+                bmi < 30.0 -> "Nadwaga"
+                bmi < 35.0 -> "Otyłość I stopnia"
+                bmi < 40.0 -> "Otyłość II stopnia"
+                else -> "Otyłość III stopnia"
+            }
+        } else {
+            bmiResult = null
+            bmiCategory = "Wprowadź poprawne dane"
+        }
+    }
+
+    val resetValues = {
+        weight = ""
+        height = ""
+        bmiResult = null
+        bmiCategory = ""
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            "Kalkulator BMI",
+            style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 24.dp)
+        )
+
+        OutlinedTextField(
+            value = weight,
+            onValueChange = { weight = it.filter { char -> char.isDigit() || char == '.' } },
+            label = { Text("Waga (kg)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier
+                .fillMaxWidth(0.8f)
+                .padding(vertical = 8.dp)
+        )
+
+        OutlinedTextField(
+            value = height,
+            onValueChange = { height = it.filter { char -> char.isDigit() || char == '.' } },
+            label = { Text("Wzrost (cm)") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier
+                .fillMaxWidth(0.8f)
+                .padding(vertical = 8.dp)
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            Button(
+                onClick = calculateBMI,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+            ) {
+                Text("Oblicz BMI")
+            }
+
+            Button(
+                onClick = resetValues,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            ) {
+                Text("Reset")
+            }
+        }
+
+        if (bmiResult != null) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .padding(vertical = 16.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.primaryContainer
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "Twój wynik:",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        "%.2f".format(bmiResult),
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        bmiCategory,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            }
+        }
+
+        Button(
+            onClick = { showInfoDialog = true },
+            modifier = Modifier.padding(top = 16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        ) {
+            Text("O kategoriach BMI")
+        }
+    }
+
+    if (showInfoDialog) {
+        AlertDialog(
+            onDismissRequest = { showInfoDialog = false },
+            title = { Text("Kategorie BMI") },
+            text = {
+                Column {
+                    Text("• Niedowaga: poniżej 18.5")
+                    Text("• Prawidłowa masa: 18.5 - 24.9")
+                    Text("• Nadwaga: 25.0 - 29.9")
+                    Text("• Otyłość I stopnia: 30.0 - 34.9")
+                    Text("• Otyłość II stopnia: 35.0 - 39.9")
+                    Text("• Otyłość III stopnia: powyżej 40.0")
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showInfoDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+}
+
 data class Day(
     val number: Int,
     val month: Int,
@@ -175,14 +344,13 @@ data class Day(
     val isToday: Boolean = false
 ) {
     fun toDateString(): String = "$number.${month + 1}.$year"
-    fun toKey(): String = "$year-${month + 1}-$number"
 }
 
 @Serializable
 data class DailyEntry(
     val date: String,
     val foodIds: List<Int>,
-    val waterMl: Int = 0 // Dodane pole dla ilości wody
+    val waterMl: Int = 0
 )
 
 @Serializable
@@ -214,7 +382,6 @@ class FoodViewModel(
         try {
             val prefs = dataStore.data.first()
 
-            // Load food items
             val foodJson = prefs[FOOD_ITEMS_KEY] ?: "[]"
             _foodItems.value = try {
                 Json.decodeFromString(foodJson)
@@ -223,7 +390,6 @@ class FoodViewModel(
                 emptyList()
             }
 
-            // Load daily entries
             val entriesJson = prefs[DAILY_ENTRIES_KEY] ?: "[]"
             _dailyEntries.value = try {
                 Json.decodeFromString<List<DailyEntry>>(entriesJson)
@@ -292,7 +458,6 @@ class FoodViewModelFactory(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalendarScreen(viewModel: FoodViewModel) {
     val dailyEntries by viewModel.dailyEntries.collectAsState()
@@ -328,7 +493,6 @@ fun CalendarScreen(viewModel: FoodViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Header with navigation
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -365,7 +529,6 @@ fun CalendarScreen(viewModel: FoodViewModel) {
                 }
             }
 
-            // Day names header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -382,7 +545,6 @@ fun CalendarScreen(viewModel: FoodViewModel) {
                 }
             }
 
-            // Calendar grid
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -398,7 +560,9 @@ fun CalendarScreen(viewModel: FoodViewModel) {
                         week.forEach { day ->
                             val dateKey = "${day.year}-${day.month + 1}-${day.number}"
                             val dailyEntry = dailyEntries[dateKey]
-                            val hasEntries = dailyEntry?.foodIds?.isNotEmpty() == true || dailyEntry?.waterMl ?: 0 > 0
+                            val hasEntries =
+                                dailyEntry?.foodIds?.isNotEmpty() == true || (dailyEntry?.waterMl
+                                    ?: 0) > 0
 
                             val backgroundColor = if (day.isToday) {
                                 MaterialTheme.colorScheme.primary
@@ -433,7 +597,6 @@ fun CalendarScreen(viewModel: FoodViewModel) {
                                     fontWeight = if (day.isToday) FontWeight.Bold else FontWeight.Normal
                                 )
 
-                                // Show indicator if day has entries
                                 if (hasEntries) {
                                     Box(
                                         modifier = Modifier
@@ -444,7 +607,6 @@ fun CalendarScreen(viewModel: FoodViewModel) {
                                     )
                                 }
 
-                                // Plus icon for adding entries
                                 if (day.isCurrentMonth) {
                                     Box(
                                         modifier = Modifier
@@ -467,7 +629,6 @@ fun CalendarScreen(viewModel: FoodViewModel) {
         }
     }
 
-    // Dialog for adding meals to a day
     if (showDayDialog && selectedDay != null) {
         DayMealDialog(
             day = selectedDay!!,
@@ -478,7 +639,6 @@ fun CalendarScreen(viewModel: FoodViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DayMealDialog(
     day: Day,
@@ -490,13 +650,10 @@ fun DayMealDialog(
     val dateKey = "${day.year}-${day.month + 1}-${day.number}"
     val dailyEntry = dailyEntries[dateKey]
 
-    // Create a mutable list of selected food IDs
     val selectedFoodIds = remember { mutableStateListOf<Int>() }
 
-    // Water tracking
     var waterAmount by remember { mutableStateOf("") }
 
-    // Search functionality
     var searchQuery by remember { mutableStateOf("") }
     val filteredFoodItems = remember(foodItems, searchQuery) {
         if (searchQuery.isBlank()) {
@@ -508,12 +665,10 @@ fun DayMealDialog(
         }
     }
 
-    // Calculate total calories
     val totalCalories = selectedFoodIds.sumOf { id ->
         foodItems.find { it.id == id }?.calories ?: 0
     }
 
-    // Initialize selectedFoodIds and waterAmount when dialog opens
     LaunchedEffect(dailyEntry) {
         selectedFoodIds.clear()
         dailyEntry?.foodIds?.let { selectedFoodIds.addAll(it) }
@@ -525,7 +680,6 @@ fun DayMealDialog(
         title = { Text("Posiłki na dzień: ${day.toDateString()}") },
         text = {
             Column {
-                // Water intake field
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -545,7 +699,6 @@ fun DayMealDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Search bar for meals
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -588,7 +741,6 @@ fun DayMealDialog(
                     }
                 }
 
-                // Display total calories
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -625,7 +777,6 @@ private fun generateCalendarDays(month: Int, year: Int): List<Day> {
         set(Calendar.DAY_OF_MONTH, 1)
     }
 
-    // Get today's date for highlighting
     val today = Calendar.getInstance()
     val isToday = { day: Int, month: Int, year: Int ->
         day == today.get(Calendar.DAY_OF_MONTH) &&
@@ -635,14 +786,11 @@ private fun generateCalendarDays(month: Int, year: Int): List<Day> {
 
     val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
 
-    // Get first day of week (1 = Sunday, 2 = Monday, etc.)
     val firstDayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
-    // Convert to Monday-first week (Monday = 0, Sunday = 6)
     val offset = (firstDayOfWeek - Calendar.MONDAY + 7) % 7
 
     val days = mutableListOf<Day>()
 
-    // Previous month days
     val prevMonth = if (month == Calendar.JANUARY) Calendar.DECEMBER else month - 1
     val prevYear = if (month == Calendar.JANUARY) year - 1 else year
     val prevMonthDays = Calendar.getInstance().apply {
@@ -655,15 +803,13 @@ private fun generateCalendarDays(month: Int, year: Int): List<Day> {
         days.add(Day(dayNumber, prevMonth, prevYear, false, isToday(dayNumber, prevMonth, prevYear)))
     }
 
-    // Current month days
     for (i in 1..daysInMonth) {
         days.add(Day(i, month, year, true, isToday(i, month, year)))
     }
 
-    // Next month days (to fill the grid)
     val nextMonth = if (month == Calendar.DECEMBER) Calendar.JANUARY else month + 1
     val nextYear = if (month == Calendar.DECEMBER) year + 1 else year
-    val remaining = 42 - days.size // 6 weeks * 7 days
+    val remaining = 42 - days.size
 
     for (i in 1..remaining) {
         days.add(Day(i, nextMonth, nextYear, false, isToday(i, nextMonth, nextYear)))
@@ -672,7 +818,6 @@ private fun generateCalendarDays(month: Int, year: Int): List<Day> {
     return days
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StorageScreen(viewModel: FoodViewModel) {
     val foodItems by viewModel.foodItems.collectAsState(emptyList())
@@ -680,7 +825,6 @@ fun StorageScreen(viewModel: FoodViewModel) {
     var foodName by remember { mutableStateOf("") }
     var calories by remember { mutableStateOf("") }
 
-    // Search functionality
     var searchQuery by remember { mutableStateOf("") }
     val filteredFoodItems = remember(foodItems, searchQuery) {
         if (searchQuery.isBlank()) {
@@ -756,7 +900,6 @@ fun StorageScreen(viewModel: FoodViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Search bar
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -838,4 +981,5 @@ sealed class Screen(
 ) {
     data object Calendar : Screen("calendar", "Calendar", Icons.Filled.DateRange)
     data object Storage  : Screen("storage",  "Storage",  Icons.Filled.Build)
+    data object BMI      : Screen("bmi",      "BMI",      Icons.Filled.AccountCircle)
 }
