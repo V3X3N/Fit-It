@@ -6,6 +6,8 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,19 +18,26 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -42,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,7 +61,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.core.DataStore
@@ -78,6 +90,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.util.Calendar
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "fit_it_data")
 
@@ -149,37 +162,209 @@ fun BottomNavigationBar(navController: NavController) {
     }
 }
 
+data class Day(
+    val number: Int,
+    val month: Int,
+    val year: Int,
+    val isCurrentMonth: Boolean,
+    val isToday: Boolean = false
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalendarScreen() {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val calendar = remember { Calendar.getInstance() }
+
+    var currentMonth by remember { mutableIntStateOf(calendar.get(Calendar.MONTH)) }
+    var currentYear by remember { mutableIntStateOf(calendar.get(Calendar.YEAR)) }
+
+    val days = remember(currentMonth, currentYear) {
+        generateCalendarDays(currentMonth, currentYear)
+    }
+
+    val weeks = remember(days) {
+        days.chunked(7)
+    }
+
+    val monthNames = listOf(
+        "Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec",
+        "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień"
+    )
 
     Scaffold(
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    scope.launch {
-                        snackbarHostState.showSnackbar("Wyświetlanie dni")
-                    }
-                }
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Show days")
-            }
-        }
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
     ) { innerPadding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentAlignment = Alignment.Center
+                .padding(innerPadding)
         ) {
-            Text(
-                text = "Calendar Screen",
-                style = MaterialTheme.typography.headlineLarge,
-            )
+            // Header with navigation
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = {
+                    if (currentMonth == Calendar.JANUARY) {
+                        currentMonth = Calendar.DECEMBER
+                        currentYear--
+                    } else {
+                        currentMonth--
+                    }
+                }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Poprzedni miesiąc")
+                }
+
+                Text(
+                    text = "${monthNames[currentMonth]} $currentYear",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+
+                IconButton(onClick = {
+                    if (currentMonth == Calendar.DECEMBER) {
+                        currentMonth = Calendar.JANUARY
+                        currentYear++
+                    } else {
+                        currentMonth++
+                    }
+                }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Następny miesiąc")
+                }
+            }
+
+            // Day names header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceAround
+            ) {
+                listOf("Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd").forEach { dayName ->
+                    Text(
+                        text = dayName,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.width(40.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            // Calendar grid
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
+                items(weeks) { week ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceAround
+                    ) {
+                        week.forEach { day ->
+                            val backgroundColor = if (day.isToday) {
+                                MaterialTheme.colorScheme.primary
+                            } else if (day.isCurrentMonth) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            }
+
+                            val textColor = if (day.isToday) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else if (day.isCurrentMonth) {
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(backgroundColor)
+                                    .clickable {
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(
+                                                "Wybrano dzień: ${day.number}.${day.month + 1}.${day.year}"
+                                            )
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = day.number.toString(),
+                                    color = textColor,
+                                    fontWeight = if (day.isToday) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+private fun generateCalendarDays(month: Int, year: Int): List<Day> {
+    val calendar = Calendar.getInstance().apply {
+        set(Calendar.MONTH, month)
+        set(Calendar.YEAR, year)
+        set(Calendar.DAY_OF_MONTH, 1)
+    }
+
+    // Get today's date for highlighting
+    val today = Calendar.getInstance()
+    val isToday = { day: Int, month: Int, year: Int ->
+        day == today.get(Calendar.DAY_OF_MONTH) &&
+                month == today.get(Calendar.MONTH) &&
+                year == today.get(Calendar.YEAR)
+    }
+
+    val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
+
+    // Get first day of week (1 = Sunday, 2 = Monday, etc.)
+    val firstDayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
+    // Convert to Monday-first week (Monday = 0, Sunday = 6)
+    val offset = (firstDayOfWeek - Calendar.MONDAY + 7) % 7
+
+    val days = mutableListOf<Day>()
+
+    // Previous month days
+    val prevMonth = if (month == Calendar.JANUARY) Calendar.DECEMBER else month - 1
+    val prevYear = if (month == Calendar.JANUARY) year - 1 else year
+    val prevMonthDays = Calendar.getInstance().apply {
+        set(Calendar.MONTH, prevMonth)
+        set(Calendar.YEAR, prevYear)
+    }.getActualMaximum(Calendar.DAY_OF_MONTH)
+
+    for (i in 0 until offset) {
+        val dayNumber = prevMonthDays - offset + i + 1
+        days.add(Day(dayNumber, prevMonth, prevYear, false, isToday(dayNumber, prevMonth, prevYear)))
+    }
+
+    // Current month days
+    for (i in 1..daysInMonth) {
+        days.add(Day(i, month, year, true, isToday(i, month, year)))
+    }
+
+    // Next month days (to fill the grid)
+    val nextMonth = if (month == Calendar.DECEMBER) Calendar.JANUARY else month + 1
+    val nextYear = if (month == Calendar.DECEMBER) year + 1 else year
+    val remaining = 42 - days.size // 6 weeks * 7 days
+
+    for (i in 1..remaining) {
+        days.add(Day(i, nextMonth, nextYear, false, isToday(i, nextMonth, nextYear)))
+    }
+
+    return days
 }
 
 @Serializable
